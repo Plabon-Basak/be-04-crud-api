@@ -4,3 +4,6 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+# BE-05 generated files
+BE-05-polite-scraper/cache/
+BE-05-polite-scraper/output/
