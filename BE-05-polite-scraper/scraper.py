@@ -26,59 +26,77 @@ MIN_REQUEST_INTERVAL = 0.5
 MAX_CATALOGUE_PAGES = 3
 
 _last_request_time = 0.0
+PAGES_FETCHED = 0
+CACHE_HITS = 0
 
 
 def fetch_page(url: str) -> tuple[str, bool]:
     """Fetch a page or load its uniquely named cached HTML."""
-    global _last_request_time
+    global _last_request_time, PAGES_FETCHED, CACHE_HITS
 
     parsed = urlparse(url)
 
     if url == BASE_URL:
         cache_path = CACHE_DIR / "catalogue-page-1.html"
-
     elif "/catalogue/page-" in parsed.path:
         cache_path = CACHE_DIR / Path(parsed.path).name
-
     else:
-        # Use the unique book slug, not the shared index.html name.
         book_slug = Path(parsed.path).parent.name
         cache_path = CACHE_DIR / "details" / f"{book_slug}.html"
 
     if cache_path.exists():
         html = cache_path.read_text(encoding="utf-8")
+        CACHE_HITS += 1
         print(f"CACHE HIT: {url}")
         print(f"Response size: {len(html.encode('utf-8'))} bytes")
         return html, True
 
-    elapsed = time.monotonic() - _last_request_time
+    for attempt in range(2):
+        elapsed = time.monotonic() - _last_request_time
 
-    if _last_request_time and elapsed < MIN_REQUEST_INTERVAL:
-        time.sleep(MIN_REQUEST_INTERVAL - elapsed)
+        if _last_request_time and elapsed < MIN_REQUEST_INTERVAL:
+            time.sleep(MIN_REQUEST_INTERVAL - elapsed)
 
-    print(f"FETCH: {url}")
+        print(f"FETCH: {url}")
+        _last_request_time = time.monotonic()
 
-    response = requests.get(
-        url,
-        headers={"User-Agent": USER_AGENT},
-        timeout=TIMEOUT_SECONDS,
-    )
+        try:
+            response = requests.get(
+                url,
+                headers={"User-Agent": USER_AGENT},
+                timeout=TIMEOUT_SECONDS,
+            )
+        except requests.Timeout:
+            if attempt == 0:
+                print(f"RETRY after timeout: {url}")
+                continue
+            raise
 
-    _last_request_time = time.monotonic()
-    response.raise_for_status()
+        if response.status_code >= 500 and attempt == 0:
+            print(
+                f"RETRY after HTTP {response.status_code}: {url}"
+            )
+            continue
 
-    if response.status_code != 200:
-        raise requests.HTTPError(
-            f"Unexpected HTTP status: {response.status_code}",
-            response=response,
-        )
-    response.encoding = "utf-8"
-    html = response.text
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(html, encoding="utf-8")
+        response.raise_for_status()
 
-    print(f"Response size: {len(response.content)} bytes")
-    return html, False
+        if response.status_code != 200:
+            raise requests.HTTPError(
+                f"Unexpected HTTP status: {response.status_code}",
+                response=response,
+            )
+
+        response.encoding = "utf-8"
+        html = response.text
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(html, encoding="utf-8")
+
+        PAGES_FETCHED += 1
+        print(f"Response size: {len(response.content)} bytes")
+        return html, False
+
+    raise RuntimeError(f"Failed to fetch page after retry: {url}")
 
 
 def discover_catalogue() -> tuple[list[str], int]:
@@ -184,6 +202,9 @@ def normalize_price(price_text: str) -> float:
 def main() -> None:
     started_at = datetime.now(timezone.utc)
     start_monotonic = time.monotonic()
+    global PAGES_FETCHED, CACHE_HITS
+    PAGES_FETCHED = 0
+    CACHE_HITS = 0
 
     books = []
     errors = []
@@ -256,7 +277,10 @@ def main() -> None:
         "discovered_urls": len(urls),
         "valid_records": len(books),
         "invalid_records": len(errors),
-        "failed_pages": failed_pages,
+        "failed_pages": len(failed_pages),
+        "failed_page_urls": failed_pages,
+        "pages_fetched": PAGES_FETCHED,
+        "cache_hits": CACHE_HITS,
     }
 
     (OUTPUT_DIR / "run-report.json").write_text(

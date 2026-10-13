@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-13T08:51:34.988999+00:00",
+  "duration_seconds": 0.89,
+  "catalogue_pages_visited": 3,
+  "discovered_urls": 60,
+  "valid_records": 60,
+  "invalid_records": 0,
+  "failed_pages": 0,
+  "failed_page_urls": [],
+  "pages_fetched": 0,
+  "cache_hits": 63
+}
